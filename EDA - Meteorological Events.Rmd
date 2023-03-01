@@ -1,0 +1,435 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+## BRIEF ##
+This document is about exploring and extracting some insights from the Storm Data which is an official publication of National Oceanic and Atmospheric Administration.
+Across the USA starting from 1950 to 2011 meteorological events are observed with its results such as injuries, fatalities and damages on crops and on properties. We are going to investigate if event types are correlated with damage types.    
+At first section We will download the data and clean some of it, transform the data, look at columns and group events to have ideas which events are more dangerous for human life and have strong impact on economy. We will compare top events that effects most. We will plot our data to understand better and see relations between events and damages. And we will examine by years and also by seasons of events. This data can be investigated by different points of view. But for more detailed analysis data has to be cleaned very carefully. Especially between 1950-1970 some stats are missing or deployed with personal measurements.      
+
+## DATA PROCESSING ##
+We will download the data as bz2 zip file format.
+```{r}
+url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(url, destfile = "./data.zip")
+```
+
+Bzfiles can be read without decompositioning. 
+```{r}
+data <- read.csv(bzfile("./data.zip"))
+```
+First we look at structure of our dataset.
+```{r}
+str(data)
+```
+And let's have a look at first rows of the data:
+```{r}
+head(data)
+```
+And dimension of data:
+```{r}
+dim(data)
+```
+So we have 37 columns and 902297 rows. As we understand from the first impression from the data we have day and time of starting and ending event, place (county), event type (EVTYPE), length and width, force of event (F), fatalities and injuries from the event, damage types, latitude and longitude knowledge.
+But we have NA values in data. So let's have a look how many NAs we have:
+```{r}
+colSums(is.na(data))
+```
+We have char columns and there are "" values which can't be detected by is.na function. So let's try to find empty chars:
+```{r}
+table(data$CROPDMGEXP)
+```
+We see count of empty chars as 618413. When we use table function we can see empty chars in first item, another example:
+
+```{r}
+table(data$PROPDMGEXP)
+```
+So let's take a look only first item of what table's retrieve in only character type columns:
+```{r}
+for(i in 1:length(names(data))){
+  if (class(data[,i]) =="character"){
+    print(names(data)[i])
+    print(table(data[,i])[1])
+  }
+}
+```
+So we have empty chars in most of char columns. And what is the ratio of empty chars on total rows in same column?
+
+```{r}
+for(i in 1:length(names(data))){
+  if (class(data[,i]) =="character"){
+    print(names(data)[i])
+    print(table(data[,i])[1]/902297)
+  }
+}
+```
+Some character columns don't have any empty item which are:BGN_DATE,BGN_TIME, TIME_ZONE, STATE, EVTYPE. But in some columns empty chars are more common than others like %80.33 of END_AZI are empty chars. 
+
+```{r}
+data$BGN_DATE[1]
+```
+We already have a time column and in BGN_DATE column time " 0:00:00" is unnecessary:
+```{r}
+data$BGN_DATE <- gsub(" 0:00:00","",as.character(data$BGN_DATE))
+data$BGN_DATE <- as.Date(data$BGN_DATE, format = "%m/%d/%Y")
+
+```
+
+We have 3 columns about date and time, first one is BGN_DATE second one is BGN_TIME and the last one is TIME_ZONE. We can paste all the columns and create a POSIXct column for further analysis.
+```{r}
+data$date_time <- paste(data$BGN_DATE, data$BGN_TIME, data$TIME_ZONE)
+```
+
+Let's see if have what we wanted
+```{r}
+data$date_time[1]
+```
+It looks good. Now let's have a look other char columns:
+```{r}
+str(data)
+```
+Let's look at END_DATE.
+```{r}
+unique(sapply(data$END_DATE, nchar))
+```
+So we can assume we have 4 kind of values in EDN_DATE including empty chars.
+```{r}
+table(sapply(data$END_DATE, nchar))
+```
+We have many empty chars on this column. 
+Let's have a look at EVTYPE column:
+```{r}
+sort(unique(data$EVTYPE))
+```
+
+There are typos on the EVTYPE column and misplaced empty spaces also. And There are some Summary knowledge which will be investigated afterwards. But let's first we fix the upper lower cases:
+```{r}
+data$EVTYPE <- toupper(data$EVTYPE)
+```
+
+Let's have a look at Wind kind of events:
+```{r}
+grep("^WIND", unique(data$EVTYPE), value = TRUE)
+```
+Also there is WND or " WIND":
+```{r}
+grep("^WND", unique(data$EVTYPE), value = TRUE)
+grep("^ WIND", unique(data$EVTYPE), value = TRUE)
+```
+Let's merge them into one type:
+```{r}
+data$EVTYPE[data$EVTYPE =="WND" | data$EVTYPE ==" WIND" | data$EVTYPE =="WINDS"] <- "WIND"
+```
+And there are empty spaces in front of the words.
+```{r}
+spaced_list <- list(grep("^ ", unique(data$EVTYPE), value = TRUE))
+```
+Let's fix empty spaces with trimws:
+```{r}
+for (i in 1:length(spaced_list[[1]])){
+  data$EVTYPE[data$EVTYPE== spaced_list[[1]][i]]<-  trimws(spaced_list[[1]][i])
+}
+```
+
+Now what do we have?
+```{r}
+unique(data$EVTYPE)
+```
+There are some abbreviations. TSTM, CSTL, HVY, FLD. Let's replace them with proper words: THUNDERSTROM, COASTAL, HEAVY and FLOOD respectively. 
+```{r}
+data$EVTYPE <- gsub("TSTM*","THUNDERSTORM", data$EVTYPE)
+data$EVTYPE <- gsub("CSTL*","COASTAL", data$EVTYPE)
+data$EVTYPE <- gsub("HVY*","HEAVY", data$EVTYPE)
+data$EVTYPE <- gsub("FLD*","FLOOD", data$EVTYPE)
+```
+```{r}
+sort(unique(data$EVTYPE))
+```
+
+Let's have a look some of the summaries as event type:
+```{r}
+data[data$EVTYPE=="SUMMARY SEPT. 25-26",]
+```
+```{r}
+data[data$EVTYPE=="SUMMARY OF MARCH 24-25",]
+```
+Let's group these summaries and see if any injury or damage has recorded.
+
+```{r}
+summary(data[grepl("^SUMMARY", data$EVTYPE),])
+```
+So those rows doesn't contain any injury or damage report. Those rows are kind of summary of some down rows and only contains the locations and it is not important for us. Because at down rows we can see details. SO let's drop these rows from our data sets.
+```{r}
+data <- data[!grepl("^SUMMARY", data$EVTYPE),]
+```
+
+```{r}
+dim(data)
+```
+So we dropped 902297 - 902222 = 75 rows.
+```{r}
+str(data)
+```
+Let's take a look at F (Force of the event) column:
+```{r}
+table(data$F)
+```
+It seems this columns is being used for tornados especially. 
+```{r}
+data$F[data$EVTYPE=="TORNADO"][1:10]
+```
+Fatalities and injuries are human related damages, PROPDMG looks like a property numbers that effected from the event:
+```{r}
+
+unique(data$PROPDMG)[1:10]
+```
+PROPDMGEXP seems like a categorical variable and it is a measurement of the property damage as dollars. K for Thousand dollars, M for Million dollars and B for Billion dollars.
+```{r}
+unique(data$PROPDMGEXP)
+```
+```{r}
+data$PROPDMG[data$PROPDMGEXP=="h"]
+```
+So we should change the PROPDMG according to PROPDMGEXP. But there are numbers as characters and symbols +,- in PROPDMGEXP. Since those unknown categorizes are low numbered we will ignore them.
+```{r}
+dim(data)
+for (i in 1:902222){
+  if (data$PROPDMGEXP[i]=="K"){
+    data$PROPDMG[i] <- data$PROPDMG[i]*1000
+  }
+  if (data$PROPDMGEXP[i]=="M" | data$PROPDMGEXP[i]=="m"){
+    data$PROPDMG[i] <- data$PROPDMG[i]*1000000
+  }
+  if (data$PROPDMGEXP[i]=="B"){
+    data$PROPDMG[i] <- data$PROPDMG[i]*1000000000
+  }
+}
+
+```
+
+Now let's have a look again to our PROPDMG column:
+```{r}
+sort(unique(data$PROPDMG), decreasing =T)[1:15]
+```
+
+CROPDMG column describes the agricultural damages of the event. 
+```{r}
+unique(data$CROPDMG)
+```
+And as in the property damage we have also a column named CROPDMGEXP.
+```{r}
+unique(data$CROPDMGEXP)
+```
+So let's reassign our CROPDMG column like we did in PROPDMG:
+```{r}
+for (i in 1:902222){
+  if (data$CROPDMGEXP[i]=="K" | data$CROPDMGEXP[i]=="k"){
+    data$CROPDMG[i] <- data$CROPDMG[i]*1000
+  }
+  if (data$CROPDMGEXP[i]=="M" | data$CROPDMGEXP[i]=="m"){
+    data$CROPDMG[i] <- data$CROPDMG[i]*1000000
+  }
+  if (data$CROPDMGEXP[i]=="B"){
+    data$CROPDMG[i] <- data$CROPDMG[i]*1000000000
+  }
+}
+```
+
+OK. Now let's look at other columns:
+```{r}
+str(data)
+```
+WFO, STATEOFFIC, ZONENAMES, LATITUDE, LONGITUDE, LATITUDE_E ,LONGITUDE_    are seems deployed with localization knowledge. And REFNUM is reference number for the events. 
+
+
+## RESULTS ##
+
+We have explored our columns and have some knowledge about the data set. Now let's think about it. In this dataset we would like to know which event type is more dangerous for humans or environment. That is going to be the first question.
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+event_prop_dmg <- data %>% group_by(EVTYPE) %>% summarise(PROPDMG = sum(PROPDMG))
+```
+```{r}
+event_prop_dmg[order(event_prop_dmg$PROPDMG, decreasing = T),]
+```
+So FLOODOOD has the most damage impact over the properties. But as you could see there are so many similar event types like : FLOODASH FLOODOOD, RIVER FLOODOOD, FLOODASH FLOODOODING etc... So we can grepl those event types and sum of them but we should do the same to rest of the event types. Or we can try to categorize by guessing. What kind of events could have been done? Floods, Rains, Winds, Temperature related events, Snowing, Tornados, Erosion, etc... 
+```{r}
+event_prop_dmg[grepl("WIND", event_prop_dmg$EVTYPE),]
+```
+We can sum the property damages of the winds for sure. But how are we going to manage when two different types are combined like : RAIN/WIND, HIGH WINDS/SNOW, HEAVY SNOW AND STRONG WINDS ?
+So in this analysis we are going to consider unique events and won't categorize the data.
+Let's look at fatalities in events:
+```{r}
+event_fatalities <- data %>% group_by(EVTYPE) %>% summarise(FATALITIES= sum(FATALITIES))
+```
+```{r}
+event_fatalities[order(event_fatalities$FATALITIES, decreasing = TRUE),]
+```
+TORNADO is in the top of the list with a big gap to other events in the list. 
+And let's look at the INJURIES:
+
+```{r}
+event_injuries <- data %>% group_by(EVTYPE) %>% summarise(INJURIES = sum(INJURIES))
+```
+```{r}
+event_injuries[order(event_injuries$INJURIES, decreasing = T),]
+```
+As expected tornados are the biggest threat for the human life.
+
+And lastly let's look at CROPDMG.
+```{r}
+event_crop <- data %>% group_by(EVTYPE) %>% summarise(CROPDMG=sum(CROPDMG))
+```
+```{r}
+event_crop[order(event_crop$CROPDMG, decreasing = T),]
+```
+For agriculture DROUGHT is the biggest threat. 
+
+## PLOTTING SOME DATA ##
+```{r}
+library(ggplot2)
+```
+
+```{r}
+event_fatalities[order(event_fatalities$FATALITIES, decreasing = TRUE)[1:10],]
+```
+
+
+```{r}
+plot <- ggplot(event_fatalities[order(event_fatalities$FATALITIES, decreasing = TRUE)[1:10],], aes( y=FATALITIES,x= EVTYPE, fill=EVTYPE)) 
+plot + geom_col() + xlab("") +theme(axis.text.x = element_text(angle = 90)) +scale_fill_brewer(palette="Spectral") + ggtitle("TOTAL FATALITIES IN 1950-2011 BASED ON EVENT TYPE")
+```
+```{r}
+injuries <- ggplot(event_injuries[order(event_injuries$INJURIES, decreasing = T)[1:10],], aes(EVTYPE,INJURIES, fill=EVTYPE))
+injuries + geom_col() + theme(axis.text.x = element_text(angle = 90))+scale_fill_brewer(palette="Paired") + ggtitle("TOTAL INJURIES IN 1950-2011 BASED ON EVENT TYPE")
+```
+```{r}
+options(scipen=999)
+crop <- ggplot(event_crop[order(event_crop$CROPDMG, decreasing = T)[1:10],], aes(EVTYPE,CROPDMG, fill=EVTYPE))
+crop + geom_col() + theme(axis.text.x = element_text(angle = 90))+scale_fill_brewer(palette="Paired") + ggtitle("TOTAL CROP DAMAGE ($) IN 1950-2011 BASED ON EVENT TYPE")
+
+```
+```{r}
+event_prop_dmg[order(event_prop_dmg$PROPDMG,decreasing = T),]
+options(scipen=999)
+prop <- ggplot(event_prop_dmg[order(event_prop_dmg$PROPDMG,decreasing = T)[1:10],], aes(EVTYPE,PROPDMG, fill=EVTYPE))
+prop + geom_col() + theme(axis.text.x = element_text(angle = 90))+scale_fill_brewer(palette="Paired") + ggtitle("TOTAL PROPERTIES DAMAGE ($) IN 1950-2011 BASED ON EVENT")
+```
+It seems Floodood has the biggest impact on property damages. 
+We plotted the data we have already discussed and it is obvious that tornados are the biggest danger for the human life but for agriculture drought is the biggest threat as we can see. 
+Now let's investigate these events from different perspectives. 
+Take a look at events from years:
+```{r}
+data <- data %>% mutate(YEAR= stringr::str_extract(data$BGN_DATE, "^.{4}"))
+```
+Grouping the data based on crop damage, injuries and fatalities on years:
+```{r}
+library(lattice)
+year_groups <- data %>% group_by(YEAR) %>% summarise(CROPDAMAGE = sum(CROPDMG), INJURIES = sum(INJURIES), FATALITIES = sum(FATALITIES))
+
+```
+```{r}
+year_groups[order(year_groups$FATALITIES, decreasing = T),]
+```
+```{r}
+year_groups[order(year_groups$INJURIES, decreasing = T),]
+
+```
+```{r}
+year_groups[order(year_groups$CROPDAMAGE, decreasing = T),]
+
+```
+Injuries most numbers are observed in 1998,2011 and 1974. Fatalities highest numbers are observed in 1995, 2011, 1999. So let's compare these two variable in 1974,1995,1998,1999 and in 2011 (both have high numbers in 2011)
+```{r}
+fatalities_injuries <- subset(year_groups, YEAR=="1995" | YEAR=="2011" | YEAR=="1999" | YEAR=="1998" | YEAR=="1974")
+
+xyplot(INJURIES~FATALITIES | YEAR, data = fatalities_injuries, layout = c(5,1), main="INJURIES AND FATALITIES RELATION")
+```
+We could assume fatalities and injuries can be related but this doesn't seem to be so true. Only 2011 both variables are high. For ex in 1974 injuries are 6824 but fatalities are 366.
+
+Let's do a similar comparison for crop damage and injuries:
+
+```{r}
+injuries_crop <- subset(year_groups, YEAR=="1994"| YEAR=="1993" | YEAR =="1998" |YEAR =="2011"| YEAR=="1974")
+xyplot(CROPDAMAGE~INJURIES | YEAR, data = injuries_crop, layout = c(5,1), main ="CROPDAMAGE AND INJURIES RELATION")
+
+```
+Let's take a look at some event types damages:
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+
+event_groups <- data %>% group_by(EVTYPE) %>% summarise(CROPDAMAGE = sum(CROPDMG), INJURIES = sum(INJURIES), FATALITIES = sum(FATALITIES), PROPERTY_DAMAGE = sum(PROPDMG))
+top_events <-  subset(event_groups, EVTYPE=="TORNADO"| EVTYPE=="EXCESSIVE HEAT" | EVTYPE=="DROUGHT")
+par(mfrow = c(1, 4), mar = c(4, 4, 2, 1), oma = c(0, 0, 2, 0))
+barplot(INJURIES ~ EVTYPE, data= top_events)
+barplot(CROPDAMAGE ~ EVTYPE,data= top_events)
+barplot(FATALITIES ~ EVTYPE,data= top_events)
+barplot(PROPERTY_DAMAGE ~ EVTYPE, data = top_events)
+title("TOP EVENTS' THREAT COMPARISON", outer= T)
+```
+Let's take a look at events monthly. First We need to create a new column by mutating BGN_DATE column:
+```{r}
+data$MONTH <- substr(data$BGN_DATE, 6, 7)
+```
+And we will group the event damages by months.
+```{r}
+monthly_events <- data %>% group_by(MONTH) %>% summarise(CROPDAMAGE = sum(CROPDMG), INJURIES = sum(INJURIES), FATALITIES = sum(FATALITIES), PROPERTY_DAMAGE = sum(PROPDMG))
+```
+Let's have a look at our new grouped data:
+```{r}
+monthly_events
+```
+```{r}
+month_injury <- ggplot(monthly_events, aes(MONTH,INJURIES, fill=MONTH))
+month_injury + geom_col() + scale_fill_brewer(palette="Paired") + ggtitle("TOTAL INJURIES BETWEEN 1950-2011 BASED ON MONTH")
+```
+And fatalities by months:
+```{r}
+month_fatality <- ggplot(monthly_events, aes(MONTH,FATALITIES, fill=MONTH))
+month_fatality + geom_col() + scale_fill_brewer(palette="Paired") + ggtitle("TOTAL FATALITIES BETWEEN 1950-2011 BASED ON MONTH")
+```
+Property damages by months:
+```{r}
+month_prop <- ggplot(monthly_events, aes(MONTH,PROPERTY_DAMAGE, fill=MONTH))
+month_prop + geom_col() + scale_fill_brewer(palette="Paired") + ggtitle("MONTHLY TOTAL PROPERTY DAMAGE BETWEEN 1950-2011")
+```
+```{r}
+month_crop <- ggplot(monthly_events, aes(MONTH,CROPDAMAGE, fill=MONTH))
+month_crop + geom_col() + scale_fill_brewer(palette="Paired") + ggtitle("MONTHLY TOTAL CROP DAMAGE BETWEEN 1950-2011")
+```
+We now know tornados are the biggest danger for human life and drought is the biggest threat for the agriculture. And now we have learnt crop damage mostly taken at 8th month of the years. So can we assume droughts are being happening at 8 th months or droughts can be more damaging at 8th months?
+Let's investigate this event type:
+```{r}
+drought <- data %>% group_by(EVTYPE) %>% subset(EVTYPE=="DROUGHT") %>% group_by(MONTH) %>% summarise(CROPDAMAGE = sum(CROPDMG))
+```
+```{r}
+drought
+```
+```{r}
+drought_crop <- ggplot(drought, aes(MONTH,CROPDAMAGE, fill=MONTH))
+drought_crop + geom_col() + scale_fill_brewer(palette="Paired") + ggtitle("Monthly Total Crop Damage Between 1950-2011 By Drought" )
+```
+We seem to be right about our guess. Droughts are dangerous at 8th months.
+We should investigate tornados also, tornados are the most dangerous event for human life.
+Let's look which months tornados has caused fatalities:
+
+```{r}
+tornado <- data %>% group_by(EVTYPE) %>% subset(EVTYPE=="TORNADO") %>% group_by(MONTH) %>% summarise(FATALITIES = sum(FATALITIES))
+
+```
+```{r}
+tornado
+```
+```{r}
+tornado_fatality <- ggplot(tornado, aes(MONTH,FATALITIES, fill=MONTH))
+tornado_fatality + geom_col() + scale_fill_brewer(palette="Paired") + ggtitle("Monthly Total Fatalities Between 1950-2011 By Tornados" )
+```
+From the chart we can assume at 4th and 5th months tornados are more fatal. 
